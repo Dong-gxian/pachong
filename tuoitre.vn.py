@@ -10,13 +10,13 @@ import time
 
 __author__ = "dgx"
 
-class VietnamPlus_English(Spider.NewsSpider):
+class TUOI_TRE_ONLINE(Spider.NewsSpider):
 
     def __init__(self):
         self.total_list = 10
         self.session = requests.Session()
         self.encoding = "utf-8"
-        self.site = "VietnamPlus_English"
+        self.site = "TUOI_TRE_ONLINE"
         self.type = "news"
         self.initial_url = 'https://tuoitre.vn/'
         self.news_list_url = 'https://tuoitre.vn/timeline{}/trang-{}.htm'
@@ -97,7 +97,14 @@ class VietnamPlus_English(Spider.NewsSpider):
 
         return news_info
     
-    
+    def get_list_date(self, url):#获取新闻列表日期
+        page = self.get_page(url)
+        etree_html = etree.HTML(page)
+        time_str =  "".join(etree_html.xpath('//li[1]/@data-newsid'))[0:4]
+        if len(time_str) != 4:
+            return "failed to get date!"
+        return time_str
+
 
     def run(self):
         
@@ -107,39 +114,45 @@ class VietnamPlus_English(Spider.NewsSpider):
         client = pymongo.MongoClient(MS['server'], MS['port'])
         
         for section in self.news_sections:
-            try:    
-                total_page = self.get_list_pageNumber(section)
-                for page_number in range(1, total_page+1):
-                    news_list_url = self.news_list_url.format(section, str(page_number))
-                    news_list = self.parse_news_list(news_list_url)
-                    if len(news_list) > 0:
-                        for now_detail_url in news_list:
-                            self.now_detail_url = self.initial_url + now_detail_url
-                            if client.Vietnam.VietnamPlus_English.find({"url":self.now_detail_url}).explain()["executionStats"]["nReturned"]==0:
-                                print("添加了",self.now_detail_url)
-                                news_info = self.parse_news_details(self.now_detail_url)
-                                if news_info is not None:
-                                    client.Vietnam.VietnamPlus_English.insert_one(news_info)
-                                    if count%50 == 0:
-                                        print("插入了{}条".format(count))
-                                    count +=1
-                                    flag = 0
+            page_number = 0
+            while(True):
+                try:
+                    page_number +=1
+                    news_list_url = self.news_list_url.format(section, page_number)
+                    if self.get_list_date(news_list_url) == "2020":
+                        news_list = self.parse_news_list(news_list_url)
+                        if len(news_list) > 0:
+                            for detail_url in news_list:
+                                self.now_detail_url = self.initial_url + detail_url
+                                if client.Vietnam.TUOI_TRE_ONLINE.find({"url":self.now_detail_url}).explain()["executionStats"]["nReturned"]==0:
+                                    news_info = self.parse_news_details(self.now_detail_url)
+                                    if news_info is not None:
+                                        client.Vietnam.TUOI_TRE_ONLINE.insert_one(news_info)
+                                        print("添加了", self.now_detail_url)
+                                        if count%50 == 0:
+                                            print("插入了{}条".format(count))
+                                        count +=1
+                                        flag = 0
                                 else:
-                                    flag +=1
-                                if flag > 30:
+                                    flag += 1
+                                if flag > 300:
                                     exit("提前退出， 共插入{}条数据".format(count))
+                        else:
+                            print("找不到列表")
+                            continue
+    
                     else:
-                        print("找不到新闻列表{}".format(news_list_url))
-                        continue
-            except Exception as e:
-                print(e)
-                continue
-            print("section {} done,".format(section))
+                        print(section,"部分爬完2020年了")
+                        break
+                except Exception as e:
+                    print(e)
+                    continue
         print("全部完成！")
+    
 
 
 if __name__ == "__main__":
-    VietnamPlus_English().run()
+    TUOI_TRE_ONLINE().run()
 
 
 
