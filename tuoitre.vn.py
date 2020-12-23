@@ -4,9 +4,13 @@ import re
 import utils
 from lxml import etree
 import datetime
-from config import MONGO_SERVER as MS
+from config import MONGO_SERVER as MS, USER_AGENT_LIST
 import pymongo
 import time
+from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.events import EVENT_JOB_MAX_INSTANCES
+import os
+import random
 
 __author__ = "dgx"
 
@@ -26,7 +30,13 @@ class TUOI_TRE_ONLINE(Spider.NewsSpider):
         }
         self.news_sections = ["/3","/2","/6","/11","/659","/7","-detail","/200017","/10","/13","/661","/12","/200015"]
 
+    def getRandomHeader(self):
+        return USER_AGENT_LIST[random.randint(0, len(USER_AGENT_LIST) - 1)]
+
     def get_page(self, url):#请求页面
+        self.page_headers = {
+                "User-Agent": self.getRandomHeader()
+            }
         page = self.session.get(url, headers=self.page_headers)
 
         if page is None or page.status_code != 200:
@@ -112,6 +122,7 @@ class TUOI_TRE_ONLINE(Spider.NewsSpider):
         count = 0
         print(str(self.site)+".py start,time:{}".format(datetime.date.today().strftime("%d/%m/%Y")))
         client = pymongo.MongoClient(MS['server'], MS['port'])
+        client['admin'].authenticate(MS['user'], MS['password'])
         
         for section in self.news_sections:
             page_number = 0
@@ -124,10 +135,10 @@ class TUOI_TRE_ONLINE(Spider.NewsSpider):
                         if len(news_list) > 0:
                             for detail_url in news_list:
                                 self.now_detail_url = self.initial_url + detail_url
-                                if client.Vietnam.TUOI_TRE_ONLINE.find({"url":self.now_detail_url}).explain()["executionStats"]["nReturned"]==0:
+                                if client.vietnam.TUOI_TRE_ONLINE.find({"url":self.now_detail_url}).explain()["executionStats"]["nReturned"]==0:
                                     news_info = self.parse_news_details(self.now_detail_url)
                                     if news_info is not None:
-                                        client.Vietnam.TUOI_TRE_ONLINE.insert_one(news_info)
+                                        client.vietnam.TUOI_TRE_ONLINE.insert_one(news_info)
                                         print("添加了", self.now_detail_url)
                                         if count%50 == 0:
                                             print("插入了{}条".format(count))
@@ -153,6 +164,24 @@ class TUOI_TRE_ONLINE(Spider.NewsSpider):
 
 if __name__ == "__main__":
     TUOI_TRE_ONLINE().run()
+    restart = 0
+    scheduler = BlockingScheduler()
+    scheduler.add_job(TUOI_TRE_ONLINE().run, 'interval', seconds=2)
+
+    def my_listener(event):
+        global restart
+        restart += 1
+        print(restart)
+        if restart == 3:
+            print("TUOI_TRE_ONLINE爬虫重启次数超过2次，停止！")
+            os._exit(0)
+
+        print("TUOI_TRE_ONLINE爬虫运行超时！重启！")
+        scheduler.remove_all_jobs()
+        scheduler.add_job(TUOI_TRE_ONLINE().run, 'interval', seconds=3600)
+
+    scheduler.add_listener(my_listener, EVENT_JOB_MAX_INSTANCES)
+    scheduler.start()
 
 
 

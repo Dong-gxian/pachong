@@ -4,8 +4,12 @@ import re
 import utils
 from lxml import etree
 import datetime
-from config import MONGO_SERVER as MS
+from config import MONGO_SERVER as MS, USER_AGENT_LIST
 import pymongo
+from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.events import EVENT_JOB_MAX_INSTANCES
+import os
+import random
 
 __author__ = "dgx"
 
@@ -26,7 +30,13 @@ class CMCS(Spider.NewsSpider):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/65.0.3325.181 Safari/537.36"
         }
 
+    def getRandomHeader(self):
+        return USER_AGENT_LIST[random.randint(0, len(USER_AGENT_LIST) - 1)]
+
     def get_page(self, url):#请求页面
+        self.page_headers = {
+                "User-Agent": self.getRandomHeader()
+            }
         page = self.session.get(url, headers=self.page_headers)
 
         if page is None or page.status_code != 200:
@@ -109,10 +119,10 @@ class CMCS(Spider.NewsSpider):
             for now_detail_url in news_list:
                 self.now_detail_url = now_detail_url
                 #先检查是否已经爬过这个新闻
-                if client.Malaysia.MC.find({"url":self.now_detail_url}).explain()["executionStats"]["nReturned"]==0:
+                if client.malaysia.MC.find({"url":self.now_detail_url}).explain()["executionStats"]["nReturned"]==0:
                     news_info = self.parse_news_details(now_detail_url).copy()#
                     if news_info is not None:
-                        client.Malaysia.MC.insert_one(news_info)
+                        client.malaysia.MC.insert_one(news_info)
                         del news_info
                         count = count + 1
                         flag = 0
@@ -126,6 +136,7 @@ class CMCS(Spider.NewsSpider):
         try:
             print(str(self.media)+".py start,time:{}".format(datetime.date.today().strftime("%d/%m/%Y")))
             client = pymongo.MongoClient(MS['server'], MS['port'])
+            client['admin'].authenticate(MS['user'], MS['password'])
     
             news_list = self.parse_news_list(self.first_list_url)#爬第一页
             if len(news_list) > 0:
@@ -151,7 +162,24 @@ class CMCS(Spider.NewsSpider):
             
 
 if __name__ == "__main__":
-    CMCS().run()
+    restart = 0
+    scheduler = BlockingScheduler()
+    scheduler.add_job(CMCS().run, 'interval', seconds=2)
+
+    def my_listener(event):
+        global restart
+        restart += 1
+        print(restart)
+        if restart == 3:
+            print("CMCS爬虫重启次数超过2次，停止！")
+            os._exit(0)
+
+        print("CMCS爬虫运行超时！重启！")
+        scheduler.remove_all_jobs()
+        scheduler.add_job(CMCS().run, 'interval', seconds=3600)
+
+    scheduler.add_listener(my_listener, EVENT_JOB_MAX_INSTANCES)
+    scheduler.start()
 
 
 

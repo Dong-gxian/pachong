@@ -4,9 +4,13 @@ import re
 import utils
 from lxml import etree
 import datetime
-from config import MONGO_SERVER as MS
+from config import MONGO_SERVER as MS, USER_AGENT_LIST
 import pymongo
 import time
+from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.events import EVENT_JOB_MAX_INSTANCES
+import os
+import random
 
 __author__ = "dgx"
 
@@ -26,7 +30,13 @@ class VietnamPlus_English(Spider.NewsSpider):
         }
         self.news_sections = ['politics','world',"business","social","sports","culture","technology","environment","Travel"]
 
+    def getRandomHeader(self):
+        return USER_AGENT_LIST[random.randint(0, len(USER_AGENT_LIST) - 1)]
+
     def get_page(self, url):#请求页面
+        self.page_headers = {
+                "User-Agent": self.getRandomHeader()
+            }
         page = self.session.get(url, headers=self.page_headers)
 
         if page is None or page.status_code != 200:
@@ -112,6 +122,7 @@ class VietnamPlus_English(Spider.NewsSpider):
         count = 0
         print(str(self.site)+".py start,time:{}".format(datetime.date.today().strftime("%d/%m/%Y")))
         client = pymongo.MongoClient(MS['server'], MS['port'])
+        client['admin'].authenticate(MS['user'], MS['password'])
         
         for section in self.news_sections:
             try:    
@@ -122,11 +133,11 @@ class VietnamPlus_English(Spider.NewsSpider):
                     if len(news_list) > 0:
                         for now_detail_url in news_list:
                             self.now_detail_url = self.initial_url + now_detail_url
-                            if client.Vietnam.VietnamPlus_English.find({"url":self.now_detail_url}).explain()["executionStats"]["nReturned"]==0:
+                            if client.vietnam.VietnamPlus_English.find({"url":self.now_detail_url}).explain()["executionStats"]["nReturned"]==0:
                                 print("添加了",self.now_detail_url)
                                 news_info = self.parse_news_details(self.now_detail_url)
                                 if news_info is not None:
-                                    client.Vietnam.VietnamPlus_English.insert_one(news_info)
+                                    client.vietnam.VietnamPlus_English.insert_one(news_info)
                                     if count%50 == 0:
                                         print("插入了{}条".format(count))
                                     count +=1
@@ -146,7 +157,25 @@ class VietnamPlus_English(Spider.NewsSpider):
 
 
 if __name__ == "__main__":
-    VietnamPlus_English().run()
+    restart = 0
+    scheduler = BlockingScheduler()
+    scheduler.add_job(VietnamPlus_English().run, 'interval', seconds=2)
+
+    def my_listener(event):
+        global restart
+        restart += 1
+        print(restart)
+        if restart == 3:
+            print("VietnamPlus_English爬虫重启次数超过2次，停止！")
+            os._exit(0)
+
+        print("VietnamPlus_English爬虫运行超时！重启！")
+        scheduler.remove_all_jobs()
+        scheduler.add_job(VietnamPlus_English().run, 'interval', seconds=3600)
+
+    scheduler.add_listener(my_listener, EVENT_JOB_MAX_INSTANCES)
+    scheduler.start()
+    
 
 
 

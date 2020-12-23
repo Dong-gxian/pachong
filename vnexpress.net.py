@@ -4,9 +4,13 @@ import re
 import utils
 from lxml import etree
 import datetime
-from config import MONGO_SERVER as MS
+from config import MONGO_SERVER as MS, USER_AGENT_LIST
 import pymongo
 import time
+from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.events import EVENT_JOB_MAX_INSTANCES
+import os
+import random
 
 __author__ = "dgx"
 
@@ -32,7 +36,13 @@ class Vnexpress(Spider.NewsSpider):
 
 
 
+    def getRandomHeader(self):
+        return USER_AGENT_LIST[random.randint(0, len(USER_AGENT_LIST) - 1)]
+
     def get_page(self, url):#请求页面
+        self.page_headers = {
+                "User-Agent": self.getRandomHeader()
+            }
         page = self.session.get(url, headers=self.page_headers)
 
         if page is None or page.status_code != 200:
@@ -109,6 +119,7 @@ class Vnexpress(Spider.NewsSpider):
         count = 0
         print(str(self.site)+".py start,time:{}".format(datetime.date.today().strftime("%d/%m/%Y")))
         client = pymongo.MongoClient(MS['server'], MS['port'])
+        client['admin'].authenticate(MS['user'], MS['password'])
         page = 0
         for cate in self.cate_list:
             try:
@@ -121,10 +132,10 @@ class Vnexpress(Spider.NewsSpider):
                         for now_detail_url in news_list:
                             self.now_detail_url = now_detail_url
                             print(self.now_detail_url)
-                            if client.Vietnam.vnexpress.find({"url":self.now_detail_url}).explain()["executionStats"]["nReturned"]==0:
+                            if client.vietnam.vnexpress.find({"url":self.now_detail_url}).explain()["executionStats"]["nReturned"]==0:
                                 news_info = self.parse_news_details(self.now_detail_url)
                                 if news_info is not None:
-                                    client.Vietnam.vnexpress.insert_one(news_info)
+                                    client.vietnam.vnexpress.insert_one(news_info)
                                     if count%50 == 0:
                                         print("插入第{}个新闻".format(count))
                                     count += 1
@@ -144,7 +155,24 @@ class Vnexpress(Spider.NewsSpider):
 
 
 if __name__ == "__main__":
-    Vnexpress().run()
+    restart = 0
+    scheduler = BlockingScheduler()
+    scheduler.add_job(Vnexpress().run, 'interval', seconds=2)
+
+    def my_listener(event):
+        global restart
+        restart += 1
+        print(restart)
+        if restart == 3:
+            print("Vnexpress爬虫重启次数超过2次，停止！")
+            os._exit(0)
+
+        print("Vnexpress爬虫运行超时！重启！")
+        scheduler.remove_all_jobs()
+        scheduler.add_job(Vnexpress().run, 'interval', seconds=3600)
+
+    scheduler.add_listener(my_listener, EVENT_JOB_MAX_INSTANCES)
+    scheduler.start()
 
 
 
